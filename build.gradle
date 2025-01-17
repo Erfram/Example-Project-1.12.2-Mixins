@@ -1,0 +1,333 @@
+buildscript {
+    repositories {
+        mavenCentral()
+        gradlePluginPortal()
+        maven { url = "https://repo.spongepowered.org/maven" }
+        maven { url = 'https://maven.minecraftforge.net/' }
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:5.1.73'
+        classpath "org.apache.maven.plugins:maven-resources-plugin:3.2.0"
+        classpath 'gradle.plugin.com.github.johnrengelman:shadow:7.1.2'
+        classpath "org.spongepowered:mixingradle:0.7-SNAPSHOT"
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle'
+apply plugin: 'com.github.johnrengelman.shadow'
+apply plugin: "org.spongepowered.mixin"
+
+group = 'com.test'
+archivesBaseName = "Test"
+sourceCompatibility = targetCompatibility = "1.8"
+compileJava.options.encoding = 'UTF-8'
+
+version = project.version
+
+mixin {
+    disableAnnotationProcessorCheck()
+}
+
+// Re-run genIntellijRuns if you add a new mixin
+def mixins = new ArrayList<>(Arrays.asList(
+        "--tweakClass",
+        "org.spongepowered.asm.launch.MixinTweaker",
+))
+
+def mixinFiles = new ArrayList<>(Arrays.asList(
+        'mixins/mixins.late.main.json'
+))
+
+mixinFiles.forEach {
+    mixins.add("--mixin")
+    mixins.add(it)
+}
+
+minecraft {
+
+    mappings channel: 'snapshot', version: '20171003-1.12'
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+
+            property 'forge.logging.markers', 'SCAN,REGISTRIES,REGISTRYDUMP'
+
+            property 'forge.logging.console.level', 'debug'
+
+            jvmArgs("-Xmx1G")
+
+            args mixins
+        }
+
+        server {
+            property 'forge.logging.markers', 'SCAN,REGISTRIES,REGISTRYDUMP'
+
+            property 'forge.logging.console.level', 'debug'
+
+            jvmArgs("-Xmx1G")
+
+            args mixins
+        }
+    }
+}
+
+repositories {
+    mavenCentral()
+    maven { url = "https://repo.spongepowered.org/maven" }
+    maven { url = "https://maven.cleanroommc.com" }
+}
+
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.12.2-14.23.5.2860'
+
+    implementation("net.minecraftforge:mergetool:0.2.3.3") { force = true }
+
+    implementation 'zone.rong:mixinbooter:7.1'
+
+    String mixin = 'org.spongepowered:mixin:0.8.3'
+    implementation (mixin) {
+        transitive = false
+    }
+    annotationProcessor 'org.ow2.asm:asm-debug-all:5.2'
+    annotationProcessor 'com.google.guava:guava:24.1.1-jre'
+    annotationProcessor 'com.google.code.gson:gson:2.8.6'
+    annotationProcessor (mixin) {
+        transitive = false
+    }
+}
+
+// Example for how to get properties into the manifest for reading by the runtime...
+
+jar {
+    manifest {
+        attributes([
+                "Implementation-Title"       : project.name,
+                "Implementation-Version"     : project.version,
+                "Implementation-Timestamp"   : new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+                "TweakClass"                 : "org.spongepowered.asm.launch.MixinTweaker",
+                "MixinConfigs"               : mixinFiles.stream().filter { it.contains("early") }.collect(Collectors.joining(",")),
+                "FMLCorePluginContainsFMLMod": true,
+                "ForceLoadAsMod"             : true,
+        ])
+    }
+}
+
+jar.finalizedBy('reobfJar')
+
+import java.util.stream.Collectors
+
+shadowJar {
+    dependencies {
+    }
+    archiveClassifier.set("")
+}
+
+task prepareAssets(type: Copy) {
+    group = 'build'
+
+    inputs.property 'version', project.version
+    inputs.property "mcversion", mcversion
+
+    project.version += "-" + mcversion
+
+    from (sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+
+        // Replace version
+        expand(project.properties)
+    }
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+
+    into project.file('build/classes/java/main')
+}
+
+classes.dependsOn(prepareAssets)
+
+tasks.withType(Jar).all { duplicatesStrategy = DuplicatesStrategy.EXCLUDE }
+
+/* Dev build */
+task deobfJar(type: Jar) {
+    from sourceSets.main.output
+    classifier = 'dev'
+}
+
+task sourcesJar(type: Jar) {
+    from sourceSets.main.allJava
+    classifier = 'sources'
+}
+
+artifacts {
+    archives deobfJar
+    archives sourcesJar
+}
+
+import org.apache.tools.ant.taskdefs.condition.Os
+
+task multiMC(type: Copy){
+    System.out.println("build/libs/${archivesBaseName}-${version}.jar")
+    from "build/libs/${archivesBaseName}-${version}.jar"
+    into 'build/libs/'
+    rename { String fileName ->
+        fileName.replace("-${version}", "-multiMC")
+    }
+}
+
+jar.finalizedBy(multiMC)
+
+task compareLangFiles {
+    doLast {
+        def help = file("src/main/resources/assets/${archivesBaseName}/lang/")
+        def parse = { File file ->
+            def map = new HashMap()
+            def splits = file.text.split("\n")
+
+            for (split in splits) {
+                def index = split.indexOf("=")
+
+                if (index == -1) {
+                    continue
+                }
+
+                map.put(split.substring(0, index), true)
+            }
+
+            return map
+        }
+
+        if (!help.exists()) {
+            return
+        }
+
+        def en = file("${help.getAbsolutePath()}/en_US.lang")
+        def en_map = parse(en)
+
+        for (lang_file in help.listFiles()) {
+            if (!lang_file.name.endsWith(".lang") || lang_file.name.startsWith("en_US")) {
+                continue
+            }
+
+            def lang_map = parse(lang_file)
+            def missing = new ArrayList()
+            def extra = new ArrayList()
+
+            for (key in en_map.keySet()) {
+                if (!lang_map.containsKey(key)) {
+                    missing.add(key)
+                }
+            }
+
+            for (key in lang_map.keySet()) {
+                if (!en_map.containsKey(key)) {
+                    extra.add(key)
+                }
+            }
+
+            missing.sort()
+            extra.sort()
+
+            print("\n")
+
+            if (!missing.isEmpty() || !extra.isEmpty()) {
+                if (!missing.isEmpty()) {
+                    print("Language file ${lang_file.getName()} misses following keys:\n")
+
+                    for (key in missing) {
+                        print("- ${key}\n")
+                    }
+                }
+
+                if (!extra.isEmpty()) {
+                    print("Language file ${lang_file.getName()} has additional keys:\n")
+
+                    for (key in extra) {
+                        print("- ${key}\n")
+                    }
+                }
+            } else {
+                print("Language file ${lang_file.getName()} fully matches ${en.getName()}!\n")
+            }
+        }
+    }
+}
+
+task copyLangStrings {
+    doLast {
+        def parse = { File file ->
+            def map = new HashMap()
+            def splits = file.text.split("\n")
+
+            for (split in splits) {
+                def index = split.indexOf("=")
+
+                if (index == -1) {
+                    continue
+                }
+
+                map.put(split.substring(0, index), split.substring(index + 1))
+            }
+
+            return map
+        }
+
+        def help = file("src/main/resources/assets/${project.archivesBaseName}/lang/")
+        def en = file("${help.getAbsolutePath()}/en_US.lang")
+
+        for (file in help.listFiles()) {
+            if (file.name.endsWith(".lang") && !file.name.startsWith("en_")) {
+                def strings = parse(file)
+                def splits = en.text.split("\n")
+
+                for (def i = 0; i < splits.length; i++) {
+                    def str = splits[i]
+
+                    if (str.contains("=")) {
+                        def index = str.indexOf("=")
+                        def key = str.substring(0, index)
+                        def value = str.substring(index)
+
+                        if (strings.containsKey(key)) {
+                            splits[i] = key + "=" + strings.get(key)
+                        }
+                    }
+                }
+
+                file.write(splits.join("\n"))
+
+                print("Wrote to ${file.name}...")
+            }
+        }
+
+        print("Done!")
+    }
+}
+
+task setIncludeProvidedOption {
+    inputs.property "date", new Date()
+
+    doLast {
+        includeProvidedOption("Client")
+        includeProvidedOption("Server")
+    }
+}
+
+def includeProvidedOption(String configuration) {
+    def runConfigPath = ".idea/runConfigurations/run" + configuration + ".xml"
+    def xml = new XmlParser(false, true).parse(file(runConfigPath))
+    def toAdd = new XmlParser(false, true).parseText("<option name=\"INCLUDE_PROVIDED_SCOPE\" value=\"true\" />")
+    def children = xml.find { it.name() == "configuration" }.children()
+    if (children.find { it.name() == "option" && it.attribute("name") == "INCLUDE_PROVIDED_SCOPE" } != null) {
+        return
+    }
+    children.add(0, toAdd)
+
+    new XmlNodePrinter(new PrintWriter(new FileWriter(runConfigPath))).print(xml)
+}
+
+tasks.configureEach { task ->
+    if (task.name.contains("genIntellijRuns")) {
+        task.finalizedBy setIncludeProvidedOption
+    }
+}

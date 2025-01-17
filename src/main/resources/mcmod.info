@@ -1,0 +1,9 @@
+[{
+  "modid": "test",
+  "name": "Test",
+  "description": "Sample project for Minecraft 1.12.2 that utilizes Mixins for modifying and extending gameplay.",
+  "version": "${version}",
+  "mcversion": "${mcversion}",
+  "authorList": ["llama"],
+  "logoFile": ""
+}]

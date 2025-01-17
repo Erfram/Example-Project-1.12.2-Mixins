@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "compatibilityLevel": "JAVA_8",
+  "package": "com.test.mixin",
+  "refmap": "mixins.test.refmap.json",
+  "mixinPriority": 1000,
+  "mixins": [
+  ],
+  "client": [
+    "MinecraftMixin"
+  ],
+  "server": [
+  ]
+}
